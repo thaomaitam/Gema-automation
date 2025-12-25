@@ -1,442 +1,472 @@
 """
-Gemma Android Automation - Professional GUI
-Advanced interface with full AI customization
+Gema Cloud Automation - Professional GUI
+Entry Point with Split View 70/30 Layout (Nanobrowser Style)
+Implements Planner-Navigator Architecture
 """
 import customtkinter as ctk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox
 import threading
-import json
-from typing import Optional
+import time
+import os
+from typing import Optional, Dict, Any, List
 from pathlib import Path
+from dotenv import load_dotenv
 
-from agent.model import GemmaAgent, list_available_models, TOOL_FUNCTIONS
+# Load environment variables
+load_dotenv()
+
+# Cloud Agent imports
+from agent.brain import CloudAgent, Brain
+from agent.adapters import CLIProxyBrain
+from agent.planner import PlannerBrain
+
+# GUI imports
+from gui.styles import Colors, Fonts, Dimensions, Styles
+from gui.config import GENERAL_CONFIG, PLANNER_CONFIG, NAVIGATOR_CONFIG
+from gui.components import AgentPanel, WorkspacePanel
+from gui.components.agent_panel import AgentStatus
+from gui.components.plan_viewer import StepStatus
+from gui.settings import SettingsModal
+from gui.storage import ConfigStorage, HistoryStorage
 from tools import TOOL_REGISTRY
-import config
 
 
-class SettingsWindow(ctk.CTkToplevel):
-    """Advanced settings window"""
-    
-    def __init__(self, parent, agent: 'GemmaAgent', on_save=None):
-        super().__init__(parent)
-        self.agent = agent
-        self.on_save = on_save
-        
-        self.title("⚙️ Cài đặt AI")
-        self.geometry("600x700")
-        self.transient(parent)
-        self.grab_set()
-        
-        # Scrollable content
-        self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.scroll.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        self._create_model_settings()
-        self._create_prompt_settings()
-        self._create_tool_settings()
-        self._create_buttons()
-    
-    def _create_model_settings(self):
-        """Model parameters section"""
-        section = ctk.CTkFrame(self.scroll, fg_color="#2A2A2A", corner_radius=10)
-        section.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(section, text="🤖 Cài đặt Model", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=15, pady=10)
-        
-        # Temperature
-        temp_frame = ctk.CTkFrame(section, fg_color="transparent")
-        temp_frame.pack(fill="x", padx=15, pady=5)
-        
-        ctk.CTkLabel(temp_frame, text="Temperature:", width=120).pack(side="left")
-        self.temp_var = ctk.DoubleVar(value=0.7)
-        self.temp_slider = ctk.CTkSlider(temp_frame, from_=0, to=2, variable=self.temp_var, width=200)
-        self.temp_slider.pack(side="left", padx=10)
-        self.temp_label = ctk.CTkLabel(temp_frame, text="0.7", width=40)
-        self.temp_label.pack(side="left")
-        self.temp_slider.configure(command=lambda v: self.temp_label.configure(text=f"{v:.1f}"))
-        
-        # Max tokens
-        tokens_frame = ctk.CTkFrame(section, fg_color="transparent")
-        tokens_frame.pack(fill="x", padx=15, pady=5)
-        
-        ctk.CTkLabel(tokens_frame, text="Max Tokens:", width=120).pack(side="left")
-        self.tokens_var = ctk.StringVar(value="2048")
-        ctk.CTkEntry(tokens_frame, textvariable=self.tokens_var, width=100).pack(side="left", padx=10)
-        
-        # Keep alive
-        keep_frame = ctk.CTkFrame(section, fg_color="transparent")
-        keep_frame.pack(fill="x", padx=15, pady=(5, 15))
-        
-        ctk.CTkLabel(keep_frame, text="Keep Alive:", width=120).pack(side="left")
-        self.keep_var = ctk.StringVar(value="5m")
-        ctk.CTkOptionMenu(keep_frame, variable=self.keep_var, values=["1m", "5m", "15m", "30m", "1h"], width=100).pack(side="left", padx=10)
-    
-    def _create_prompt_settings(self):
-        """System prompt editor"""
-        section = ctk.CTkFrame(self.scroll, fg_color="#2A2A2A", corner_radius=10)
-        section.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(section, text="📝 System Prompt", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=15, pady=10)
-        
-        # Get current prompt
-        current_prompt = self.agent.messages[0]["content"] if self.agent.messages else ""
-        
-        self.prompt_text = ctk.CTkTextbox(section, height=200, font=("Consolas", 12))
-        self.prompt_text.pack(fill="x", padx=15, pady=(0, 15))
-        self.prompt_text.insert("1.0", current_prompt)
-    
-    def _create_tool_settings(self):
-        """Tool enable/disable toggles"""
-        section = ctk.CTkFrame(self.scroll, fg_color="#2A2A2A", corner_radius=10)
-        section.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(section, text="🔧 Công cụ", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=15, pady=10)
-        
-        self.tool_vars = {}
-        tools_frame = ctk.CTkFrame(section, fg_color="transparent")
-        tools_frame.pack(fill="x", padx=15, pady=(0, 15))
-        
-        for i, tool_name in enumerate(TOOL_REGISTRY.keys()):
-            var = ctk.BooleanVar(value=True)
-            self.tool_vars[tool_name] = var
-            
-            row = i // 2
-            col = i % 2
-            
-            cb = ctk.CTkCheckBox(tools_frame, text=tool_name, variable=var, width=180)
-            cb.grid(row=row, column=col, sticky="w", padx=5, pady=3)
-    
-    def _create_buttons(self):
-        """Action buttons"""
-        btn_frame = ctk.CTkFrame(self.scroll, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=20)
-        
-        ctk.CTkButton(btn_frame, text="💾 Lưu", command=self._save, fg_color="#2D5A27", hover_color="#3D7A37").pack(side="right", padx=5)
-        ctk.CTkButton(btn_frame, text="🔄 Reset", command=self._reset, fg_color="#4A4A4A").pack(side="right", padx=5)
-        ctk.CTkButton(btn_frame, text="❌ Hủy", command=self.destroy, fg_color="#5A3A3A", hover_color="#7A4A4A").pack(side="right", padx=5)
-    
-    def _save(self):
-        """Save settings"""
-        # Update system prompt
-        new_prompt = self.prompt_text.get("1.0", "end-1c")
-        if self.agent.messages:
-            self.agent.messages[0]["content"] = new_prompt
-        
-        if self.on_save:
-            self.on_save({
-                "temperature": self.temp_var.get(),
-                "max_tokens": int(self.tokens_var.get()),
-                "keep_alive": self.keep_var.get(),
-                "enabled_tools": {k: v.get() for k, v in self.tool_vars.items()}
-            })
-        
-        self.destroy()
-    
-    def _reset(self):
-        """Reset to defaults"""
-        self.temp_var.set(0.7)
-        self.tokens_var.set("2048")
-        self.keep_var.set("5m")
-        for var in self.tool_vars.values():
-            var.set(True)
-
-
-class DevicePanel(ctk.CTkFrame):
-    """Device management panel"""
-    
-    def __init__(self, parent, **kwargs):
-        super().__init__(parent, fg_color="#1A1A1A", **kwargs)
-        
-        ctk.CTkLabel(self, text="📱 Thiết bị", font=("Segoe UI", 14, "bold")).pack(pady=10)
-        
-        self.device_var = ctk.StringVar(value="Chọn thiết bị...")
-        self.device_menu = ctk.CTkOptionMenu(self, variable=self.device_var, values=["Đang tải..."], width=180)
-        self.device_menu.pack(padx=10, pady=5)
-        
-        ctk.CTkButton(self, text="🔄 Làm mới", command=self.refresh_devices, height=30, fg_color="#3A3A3A").pack(padx=10, pady=5)
-        
-        self.device_info = ctk.CTkLabel(self, text="", font=("Segoe UI", 10), text_color="#888888")
-        self.device_info.pack(pady=5)
-        
-        self.refresh_devices()
-    
-    def refresh_devices(self):
-        """Refresh device list"""
-        def load():
-            try:
-                result = TOOL_REGISTRY["list_emulators"]()
-                if result.get("success"):
-                    devices = result.get("devices", [])
-                    names = [d.get("name", d.get("id", "Unknown")) for d in devices]
-                    if names:
-                        self.after(0, lambda: self._update_devices(names, devices))
-                    else:
-                        self.after(0, lambda: self._update_devices(["Không có thiết bị"], []))
-            except Exception as e:
-                self.after(0, lambda: self._update_devices([f"Lỗi: {e}"], []))
-        
-        threading.Thread(target=load, daemon=True).start()
-    
-    def _update_devices(self, names: list, devices: list):
-        self.device_menu.configure(values=names)
-        if names:
-            self.device_var.set(names[0])
-            if devices:
-                info = devices[0]
-                self.device_info.configure(text=f"{info.get('dimensions', 'N/A')}")
-
-
-class ChatBubble(ctk.CTkFrame):
-    """Enhanced chat bubble with tool execution display"""
-    
-    def __init__(self, parent, message: str, is_user: bool, tool_info: dict = None, **kwargs):
-        super().__init__(parent, fg_color="transparent", **kwargs)
-        
-        bubble_color = "#2D5A27" if is_user else "#3A3A3A"
-        align = "e" if is_user else "w"
-        
-        # Tool execution indicator
-        if tool_info:
-            tool_frame = ctk.CTkFrame(self, fg_color="#252525", corner_radius=8)
-            tool_frame.pack(anchor=align, padx=10, pady=2)
-            
-            icon = "✅" if tool_info.get("success") else "❌"
-            ctk.CTkLabel(tool_frame, text=f"🔧 {tool_info.get('name', 'Tool')} {icon}", 
-                        font=("Segoe UI", 11), text_color="#888888").pack(padx=10, pady=5)
-        
-        # Message bubble
-        bubble = ctk.CTkFrame(self, fg_color=bubble_color, corner_radius=15)
-        bubble.pack(anchor=align, padx=10, pady=2)
-        
-        ctk.CTkLabel(bubble, text=message, wraplength=450, justify="left", 
-                    font=("Segoe UI", 13)).pack(padx=15, pady=10)
-
-
-class GemmaProGUI(ctk.CTk):
-    """Professional GUI with full customization"""
+class GemaCloudGUI(ctk.CTk):
+    """Main Gema Cloud GUI Application with Planner-Navigator Architecture"""
     
     def __init__(self):
         super().__init__()
         
-        self.title("🤖 Gemma Android Automation Pro")
-        self.geometry("1100x750")
-        self.minsize(900, 600)
+        self.title("☁️ Gema Cloud Automation")
+        self.geometry("1280x800")
+        self.minsize(1024, 700)
         
+        # Apply dark theme
         ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("dark-blue")
+        self.configure(fg_color=Colors.BG_PRIMARY)
         
-        self.agent: Optional[GemmaAgent] = None
-        self.is_processing = False
-        self.settings = {"temperature": 0.7, "max_tokens": 2048}
+        # Brains State (Planner-Navigator)
+        self.planner: Optional[PlannerBrain] = None
+        self.navigator: Optional[Brain] = None
+        self.agent: Optional[CloudAgent] = None
+        
+        # Execution State
+        self._current_plan: List[Dict] = []
+        self._current_step_index: int = 0
+        self._is_paused: bool = False
+        self._is_executing: bool = False
+        
+        # Storage
+        self.config_storage = ConfigStorage()
+        self.history_storage = HistoryStorage()
+        self._current_session_id = None
+        
+        # Config - load from persistent storage
+        self.config = self.config_storage.load()
         
         self._create_layout()
-        self._load_models()
+        self._init_agents()
     
     def _create_layout(self):
-        """Create main layout"""
-        # Left sidebar
-        self.sidebar = ctk.CTkFrame(self, width=240, corner_radius=0, fg_color="#1A1A1A")
-        self.sidebar.pack(side="left", fill="y")
-        self.sidebar.pack_propagate(False)
+        """Create Split View 70/30 layout like Nanobrowser"""
+        # Header
+        self._create_header()
+        
+        # Main content frame
+        main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=Dimensions.PAD_MD, pady=(0, Dimensions.PAD_MD))
+        
+        # Configure grid for 70/30 split
+        main_frame.grid_columnconfigure(0, weight=7)  # Left: 70%
+        main_frame.grid_columnconfigure(1, weight=3)  # Right: 30%
+        main_frame.grid_rowconfigure(0, weight=1)
+        
+        # LEFT PANEL: Workspace (70%)
+        self.workspace_panel = WorkspacePanel(main_frame)
+        self.workspace_panel.grid(
+            row=0, column=0, 
+            padx=(0, Dimensions.PAD_SM), 
+            pady=0, 
+            sticky="nsew"
+        )
+        
+        # RIGHT PANEL: Agent Panel (30%)
+        self.agent_panel = AgentPanel(main_frame, on_send=self._handle_message)
+        self.agent_panel.grid(
+            row=0, column=1, 
+            padx=(Dimensions.PAD_SM, 0), 
+            pady=0, 
+            sticky="nsew"
+        )
+    
+    def _create_header(self):
+        """Create header with logo and controls"""
+        header = ctk.CTkFrame(self, fg_color=Colors.BG_SECONDARY, height=55)
+        header.pack(fill="x", padx=Dimensions.PAD_MD, pady=Dimensions.PAD_MD)
+        header.pack_propagate(False)
         
         # Logo
-        ctk.CTkLabel(self.sidebar, text="🤖 Gemma Pro", font=("Segoe UI", 22, "bold")).pack(pady=20)
+        ctk.CTkLabel(
+            header,
+            text="☁️ Gema Cloud",
+            font=Fonts.heading(),
+            text_color=Colors.TEXT_PRIMARY
+        ).pack(side="left", padx=Dimensions.PAD_LG, pady=Dimensions.PAD_SM)
         
-        # New Chat
-        ctk.CTkButton(self.sidebar, text="📝 Chat mới", command=self._new_chat, height=40, 
-                     fg_color="#2D5A27", hover_color="#3D7A37").pack(padx=15, pady=5, fill="x")
+        # Status badge
+        self.status_badge = ctk.CTkLabel(
+            header,
+            text="● Connected",
+            font=Fonts.small(),
+            text_color=Colors.ACCENT_SUCCESS
+        )
+        self.status_badge.pack(side="left", padx=Dimensions.PAD_MD)
         
-        # Model selector
-        ctk.CTkLabel(self.sidebar, text="Model:", font=("Segoe UI", 12)).pack(padx=15, pady=(20, 5), anchor="w")
+        # Settings button
+        settings_btn = ctk.CTkButton(
+            header,
+            text="⚙️ Settings",
+            width=100,
+            height=35,
+            corner_radius=Dimensions.RADIUS_SM,
+            fg_color=Colors.BG_TERTIARY,
+            hover_color=Colors.BG_HOVER,
+            text_color=Colors.TEXT_PRIMARY,
+            command=self._show_settings
+        )
+        settings_btn.pack(side="right", padx=Dimensions.PAD_MD, pady=Dimensions.PAD_SM)
         
-        self.model_var = ctk.StringVar(value=config.DEFAULT_MODEL)
-        self.model_menu = ctk.CTkOptionMenu(self.sidebar, variable=self.model_var, 
-                                           values=[config.DEFAULT_MODEL], command=self._on_model_change, width=210)
-        self.model_menu.pack(padx=15, pady=5)
-        
-        # Device panel
-        self.device_panel = DevicePanel(self.sidebar)
-        self.device_panel.pack(padx=15, pady=20, fill="x")
-        
-        # Spacer
-        ctk.CTkFrame(self.sidebar, fg_color="transparent").pack(fill="y", expand=True)
-        
-        # Bottom buttons
-        ctk.CTkButton(self.sidebar, text="⚙️ Cài đặt AI", command=self._show_settings, height=35, 
-                     fg_color="transparent", hover_color="#333333").pack(padx=15, pady=5, fill="x")
-        ctk.CTkButton(self.sidebar, text="💾 Xuất lịch sử", command=self._export_history, height=35,
-                     fg_color="transparent", hover_color="#333333").pack(padx=15, pady=5, fill="x")
-        ctk.CTkButton(self.sidebar, text="🌙 Đổi theme", command=self._toggle_theme, height=35,
-                     fg_color="transparent", hover_color="#333333").pack(padx=15, pady=(5, 20), fill="x")
-        
-        # Main chat area
-        self.main = ctk.CTkFrame(self, fg_color="#252525", corner_radius=0)
-        self.main.pack(side="right", fill="both", expand=True)
-        
-        # Chat display
-        self.chat_frame = ctk.CTkScrollableFrame(self.main, fg_color="transparent")
-        self.chat_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        self._show_welcome()
-        
-        # Input area
-        self._create_input_area()
+        # New Chat button
+        ctk.CTkButton(
+            header,
+            text="📝 New Chat",
+            width=100,
+            height=35,
+            fg_color=Colors.ACCENT_SUCCESS,
+            hover_color="#1EA34F",
+            text_color="#ffffff",
+            corner_radius=Dimensions.RADIUS_SM,
+            command=self._new_chat
+        ).pack(side="right", padx=Dimensions.PAD_XS, pady=Dimensions.PAD_SM)
     
-    def _create_input_area(self):
-        """Create input area with controls"""
-        input_frame = ctk.CTkFrame(self.main, fg_color="#1E1E1E", height=100)
-        input_frame.pack(fill="x", padx=20, pady=20)
-        input_frame.pack_propagate(False)
-        
-        # Top row - quick actions
-        actions = ctk.CTkFrame(input_frame, fg_color="transparent")
-        actions.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkButton(actions, text="📸 Screenshot", width=100, height=28, command=lambda: self._quick_action("take_screenshot"),
-                     fg_color="#3A3A3A").pack(side="left", padx=2)
-        ctk.CTkButton(actions, text="📱 Devices", width=80, height=28, command=lambda: self._quick_action("list_emulators"),
-                     fg_color="#3A3A3A").pack(side="left", padx=2)
-        ctk.CTkButton(actions, text="⬅️ Back", width=60, height=28, command=lambda: self._quick_action("press_back"),
-                     fg_color="#3A3A3A").pack(side="left", padx=2)
-        
-        # Input container
-        container = ctk.CTkFrame(input_frame, fg_color="#2A2A2A", corner_radius=25)
-        container.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        self.input_entry = ctk.CTkEntry(container, placeholder_text="Nhập lệnh...", font=("Segoe UI", 14),
-                                        height=45, border_width=0, fg_color="transparent")
-        self.input_entry.pack(side="left", fill="both", expand=True, padx=15)
-        self.input_entry.bind("<Return>", lambda e: self._send_message())
-        
-        ctk.CTkLabel(container, text=config.DEFAULT_MODEL, font=("Segoe UI", 10), 
-                    text_color="#666666").pack(side="right", padx=10)
-        
-        self.send_btn = ctk.CTkButton(container, text="↑", width=40, height=40, corner_radius=20,
-                                      command=self._send_message, fg_color="#2D5A27", hover_color="#3D7A37")
-        self.send_btn.pack(side="right", padx=5)
-    
-    def _show_welcome(self):
-        """Show welcome screen"""
-        frame = ctk.CTkFrame(self.chat_frame, fg_color="transparent")
-        frame.pack(expand=True, pady=80)
-        
-        ctk.CTkLabel(frame, text="🦙", font=("Segoe UI Emoji", 60)).pack(pady=10)
-        ctk.CTkLabel(frame, text="Gemma Android Automation Pro", font=("Segoe UI", 20, "bold")).pack(pady=5)
-        ctk.CTkLabel(frame, text="Nhập lệnh hoặc dùng nút nhanh bên dưới", 
-                    font=("Segoe UI", 12), text_color="#888888").pack()
-    
-    def _load_models(self):
-        def load():
-            models = list_available_models()
-            if models:
-                self.after(0, lambda: self._update_models(models))
-        threading.Thread(target=load, daemon=True).start()
-    
-    def _update_models(self, models: list):
-        self.model_menu.configure(values=models)
-        if config.DEFAULT_MODEL in models:
-            self.model_var.set(config.DEFAULT_MODEL)
-        elif models:
-            self.model_var.set(models[0])
-        self._init_agent()
-    
-    def _init_agent(self):
+    def _init_agents(self):
+        """Initialize Planner and Navigator brains"""
         try:
-            self.agent = GemmaAgent(model=self.model_var.get())
+            # Get providers from config
+            providers = self.config.get("providers", [])
+            
+            # 1. Initialize Planner (high-capability model)
+            planner_config = self.config.get("planner", PLANNER_CONFIG)
+            planner_model = planner_config.get("model", "gemini-2.5-pro")
+            planner_provider_name = planner_config.get("provider", "")
+            planner_prompt = planner_config.get("system_prompt")
+            
+            # Find provider details
+            planner_provider = self._get_provider_by_name(providers, planner_provider_name)
+            planner_api_key = planner_provider.get("api_key") if planner_provider else os.getenv("CLIPROXY_API_KEY", "gemaauto")
+            planner_base_url = planner_provider.get("base_url", "http://localhost:8317/v1") if planner_provider else "http://localhost:8317/v1"
+            
+            if not planner_api_key:
+                self.agent_panel.add_message(
+                    "⚠️ No API Key found for Planner. Please configure in Settings.",
+                    is_user=False
+                )
+                self.status_badge.configure(text="● No API Key", text_color=Colors.ACCENT_WARNING)
+                return
+            
+            self.planner = PlannerBrain(
+                api_key=planner_api_key,
+                model_name=planner_model
+            )
+            
+            # 2. Initialize Navigator (fast model with tool callback)
+            nav_config = self.config.get("navigator", NAVIGATOR_CONFIG)
+            nav_model = nav_config.get("model", "gemini-2.5-flash")
+            nav_provider_name = nav_config.get("provider", "")
+            nav_prompt = nav_config.get("system_prompt")  # Per-role system prompt
+            
+            # Find provider details
+            nav_provider = self._get_provider_by_name(providers, nav_provider_name)
+            nav_api_key = nav_provider.get("api_key") if nav_provider else os.getenv("CLIPROXY_API_KEY", "gemaauto")
+            nav_base_url = nav_provider.get("base_url", "http://localhost:8317/v1") if nav_provider else "http://localhost:8317/v1"
+            
+            self.navigator = CLIProxyBrain(
+                api_key=nav_api_key,
+                model_name=nav_model,
+                base_url=nav_base_url,
+                tool_callback=self._on_tool_event,
+                system_prompt=nav_prompt  # Pass per-role prompt
+            )
+            
+            # Apply Caching Middleware to Navigator
+            from agent.middleware.cache_manager import CacheManager
+            from agent.middleware.caching_brain import CachingBrain
+            
+            cache_manager = CacheManager()
+            self.navigator = CachingBrain(self.navigator, cache_manager, user_id="default_user")
+            
+            # Initialize Agent with Navigator
+            self.agent = CloudAgent(self.navigator)
+            
+            print(f"🧠 Planner: {planner_model} ({planner_provider_name})")
+            print(f"🚀 Navigator: {nav_model} ({nav_provider_name})")
+            
+            self.status_badge.configure(text=f"● {nav_model}", text_color=Colors.ACCENT_SUCCESS)
+            
         except Exception as e:
-            messagebox.showerror("Lỗi", f"Không thể khởi tạo agent: {e}")
+            import traceback
+            traceback.print_exc()
+            self.agent_panel.add_message(f"❌ Error: {e}", is_user=False)
+            self.status_badge.configure(text="● Error", text_color=Colors.ACCENT_ERROR)
     
-    def _on_model_change(self, model: str):
-        self._init_agent()
+    def _get_provider_by_name(self, providers: List[Dict], name: str) -> Optional[Dict]:
+        """Find a provider by name from the providers list."""
+        for p in providers:
+            if p.get("name") == name:
+                return p
+        return None
+    
+    def _on_tool_event(self, event: str, data: dict):
+        """Handle tool execution events from Brain - update PlanViewer"""
+        tool_name = data.get("name", "")
+        tool_args = data.get("args", {})
+        
+        # Build description from tool name and args
+        args_str = ", ".join(f'{k}="{v}"' for k, v in list(tool_args.items())[:2])
+        description = f"{tool_name}({args_str})" if args_str else tool_name
+        
+        if event == "tool_start":
+            # Add step and mark as running
+            from gui.components.plan_viewer import StepStatus
+            step_id = self.after(0, lambda: self._add_plan_step(description, tool_name))
+        elif event == "tool_done":
+            # Mark last step as done
+            self.after(0, lambda: self._update_last_step_status("done"))
+        elif event == "tool_failed":
+            # Mark last step as failed
+            self.after(0, lambda: self._update_last_step_status("failed"))
+    
+    def _add_plan_step(self, description: str, tool_name: str):
+        """Add a step to the plan viewer (must be called from main thread)"""
+        from gui.components.plan_viewer import StepStatus
+        step_id = self.agent_panel.plan_view.add_step(description, tool_name, StepStatus.RUNNING)
+        self._current_step_id = step_id
+    
+    def _update_last_step_status(self, status: str):
+        """Update the last step's status (must be called from main thread)"""
+        from gui.components.plan_viewer import StepStatus
+        if hasattr(self, '_current_step_id') and self._current_step_id:
+            status_enum = StepStatus.COMPLETED if status == "done" else StepStatus.FAILED
+            self.agent_panel.plan_view.update_step_status(self._current_step_id, status_enum)
+    
+    def _handle_message(self, message: str, attached_files: List[Path] = None):
+        """Handle user message with Planner-Navigator workflow"""
+        attached_files = attached_files or []
+        
+        if not self.planner or not self.agent:
+            self.agent_panel.add_message("⚠️ Agent not initialized. Check Settings.", is_user=False)
+            return
+        
+        # Create session if needed
+        if not self._current_session_id:
+            title = message[:50] + "..." if len(message) > 50 else message
+            self._current_session_id = self.history_storage.create_session(title)
+        
+        # Save to history
+        file_paths = [str(f) for f in attached_files]
+        self.history_storage.add_message(self._current_session_id, "user", message, file_paths)
+        
+        # Display files info if any
+        display_msg = message
+        if attached_files:
+            files_str = ", ".join([f.name for f in attached_files[:3]])
+            if len(attached_files) > 3:
+                files_str += f" (+{len(attached_files) - 3} more)"
+            display_msg = f"{message}\n📎 {files_str}"
+        
+        # Add user message
+        self.agent_panel.add_message(display_msg, is_user=True)
+        self.agent_panel.set_processing(True)
+        self.agent_panel.set_status(AgentStatus.PLANNING)
+        
+        # Clear previous plan and switch to Plan tab
+        self.agent_panel.clear_plan()
+        self.agent_panel._switch_tab("plan")
+        
+        def execute_plan():
+            try:
+                # ========================================
+                # PHASE 1: PLANNING
+                # ========================================
+                print("🧠 Phase 1: Planning...")
+                
+                # Take initial screenshot
+                screenshot_path = None
+                try:
+                    result = TOOL_REGISTRY["take_screenshot"]()
+                    if result.get("success"):
+                        screenshot_path = result.get("filepath")
+                        if screenshot_path:
+                            self.after(0, lambda p=screenshot_path: self.workspace_panel.display_screenshot(p))
+                except Exception as e:
+                    print(f"Screenshot failed: {e}")
+                
+                # Call Planner to generate plan
+                plan_result = self.planner.create_plan(
+                    user_request=message,
+                    screenshot_path=screenshot_path
+                )
+                
+                if "error" in plan_result and plan_result["error"]:
+                    self.after(0, lambda: self.agent_panel.add_message(
+                        f"⚠️ Planning failed: {plan_result.get('error', 'Unknown error')}", 
+                        is_user=False
+                    ))
+                    return
+                
+                # Extract steps from plan
+                steps = plan_result.get("steps", [])
+                goal = plan_result.get("goal", message)
+                
+                if not steps:
+                    # Fallback to single-step if no plan generated
+                    steps = [{"step": 1, "action": message, "reasoning": "Direct execution"}]
+                
+                # Display plan in PlanViewer
+                self.after(0, lambda: self._render_plan(steps))
+                print(f"📋 Plan: {len(steps)} steps")
+                
+                # Store plan for execution
+                self._current_plan = steps
+                self._current_step_index = 0
+                
+                # Brief pause to show plan before execution
+                time.sleep(0.5)
+                
+                # ========================================
+                # PHASE 2: NAVIGATION (Execute each step)
+                # ========================================
+                print("🚀 Phase 2: Navigating...")
+                self.after(0, lambda: self.agent_panel.set_status(AgentStatus.NAVIGATING))
+                
+                for idx, step in enumerate(steps):
+                    if self._is_paused:
+                        print("⏸️ Execution paused")
+                        break
+                    
+                    step_action = step.get("action", "")
+                    step_tool = step.get("tool_hint", "")
+                    
+                    print(f"  Step {idx + 1}: {step_action}")
+                    
+                    # Mark step as running
+                    self.after(0, lambda i=idx: self.agent_panel.plan_view.start_step(i))
+                    
+                    # Take fresh screenshot before each step
+                    try:
+                        result = TOOL_REGISTRY["take_screenshot"]()
+                        if result.get("success"):
+                            screenshot_path = result.get("filepath")
+                            if screenshot_path:
+                                self.after(0, lambda p=screenshot_path: self.workspace_panel.display_screenshot(p))
+                    except Exception:
+                        pass
+                    
+                    # Navigate this step using the Navigator agent
+                    navigator_prompt = f"""Thực hiện bước sau: {step_action}
+                    
+Gợi ý tool: {step_tool}
+
+Hãy thực hiện CHÍNH XÁC hành động này, không làm gì khác."""
+                    
+                    try:
+                        response = self.agent.chat(
+                            navigator_prompt,
+                            verbose=True,
+                            screenshot_path=screenshot_path
+                        )
+                        
+                        # Mark step as completed
+                        self.after(0, lambda i=idx: self.agent_panel.plan_view.complete_step(i))
+                        
+                    except Exception as step_error:
+                        print(f"  ❌ Step failed: {step_error}")
+                        self.after(0, lambda i=idx: self.agent_panel.plan_view.fail_step(i))
+                        break
+                    
+                    # Brief pause between steps
+                    time.sleep(0.3)
+                
+                # ========================================
+                # PHASE 3: COMPLETION
+                # ========================================
+                # Take final screenshot
+                try:
+                    result = TOOL_REGISTRY["take_screenshot"]()
+                    if result.get("success"):
+                        final_path = result.get("filepath")
+                        if final_path:
+                            self.after(0, lambda p=final_path: self.workspace_panel.display_screenshot(p))
+                except Exception:
+                    pass
+                
+                # Show completion message
+                self.after(0, lambda: self.agent_panel.add_message(
+                    f"✅ Completed: {goal}",
+                    is_user=False
+                ))
+                
+            except Exception as ex:
+                import traceback
+                traceback.print_exc()
+                self.after(0, lambda e=str(ex): self.agent_panel.add_message(f"❌ Error: {e}", is_user=False))
+            finally:
+                self.after(0, lambda: self.agent_panel.set_processing(False))
+                self.after(0, lambda: self.agent_panel.set_status(AgentStatus.IDLE))
+        
+        threading.Thread(target=execute_plan, daemon=True).start()
+    
+    def _render_plan(self, steps: List[Dict]):
+        """Render the plan in PlanViewer"""
+        self.agent_panel.plan_view.render_plan(steps)
+    
+    def _on_pause(self):
+        """Handle pause button"""
+        self._is_paused = True
+        print("⏸️ Execution paused by user")
+    
+    def _on_resume(self):
+        """Handle resume button"""
+        self._is_paused = False
+        print("▶️ Execution resumed")
     
     def _new_chat(self):
+        """Start new chat"""
         if self.agent:
             self.agent.reset()
-        for widget in self.chat_frame.winfo_children():
-            widget.destroy()
-        self._show_welcome()
-    
-    def _quick_action(self, action: str):
-        """Execute quick action"""
-        if action == "take_screenshot":
-            self._send_with_text("Chụp màn hình")
-        elif action == "list_emulators":
-            self._send_with_text("Liệt kê các thiết bị đã kết nối")
-        elif action == "press_back":
-            self._send_with_text("Nhấn nút back")
-    
-    def _send_with_text(self, text: str):
-        self.input_entry.delete(0, "end")
-        self.input_entry.insert(0, text)
-        self._send_message()
-    
-    def _send_message(self):
-        if self.is_processing:
-            return
-        
-        message = self.input_entry.get().strip()
-        if not message or not self.agent:
-            return
-        
-        # Clear welcome
-        if len(self.chat_frame.winfo_children()) == 1:
-            for w in self.chat_frame.winfo_children():
-                w.destroy()
-        
-        self._add_message(message, is_user=True)
-        self.input_entry.delete(0, "end")
-        
-        self.is_processing = True
-        self.send_btn.configure(state="disabled")
-        
-        def process():
-            try:
-                response = self.agent.chat(message, verbose=True)
-                self.after(0, lambda r=response: self._add_message(r, is_user=False))
-            except Exception as ex:
-                err = f"Lỗi: {ex}"
-                self.after(0, lambda e=err: self._add_message(e, is_user=False))
-            finally:
-                self.after(0, self._finish_processing)
-        
-        threading.Thread(target=process, daemon=True).start()
-    
-    def _finish_processing(self):
-        self.is_processing = False
-        self.send_btn.configure(state="normal")
-    
-    def _add_message(self, message: str, is_user: bool, tool_info: dict = None):
-        bubble = ChatBubble(self.chat_frame, message, is_user, tool_info)
-        bubble.pack(fill="x", pady=2)
-        self.chat_frame._parent_canvas.yview_moveto(1.0)
+        self._current_plan = []
+        self._current_step_index = 0
+        self._is_paused = False
+        self.agent_panel.clear_chat()
+        self.agent_panel.clear_plan()
+        self.workspace_panel.clear()
     
     def _show_settings(self):
-        if self.agent:
-            SettingsWindow(self, self.agent, on_save=self._apply_settings)
+        """Show settings modal"""
+        SettingsModal(
+            self,
+            config=self.config,
+            on_save=self._apply_settings
+        )
     
-    def _apply_settings(self, settings: dict):
-        self.settings = settings
-    
-    def _export_history(self):
-        if not self.agent or not self.agent.messages:
-            messagebox.showinfo("Thông báo", "Không có lịch sử để xuất")
-            return
-        
-        file = filedialog.asksaveasfilename(defaultextension=".json", 
-                                           filetypes=[("JSON", "*.json"), ("Text", "*.txt")])
-        if file:
-            with open(file, "w", encoding="utf-8") as f:
-                json.dump(self.agent.messages, f, ensure_ascii=False, indent=2)
-            messagebox.showinfo("Thành công", f"Đã lưu vào {file}")
-    
-    def _toggle_theme(self):
-        current = ctk.get_appearance_mode()
-        new_mode = "light" if current == "Dark" else "dark"
-        ctk.set_appearance_mode(new_mode)
+    def _apply_settings(self, config: Dict[str, Any]):
+        """Apply saved settings"""
+        self.config = config
+        self._init_agents()
 
 
 def main():
-    app = GemmaProGUI()
+    app = GemaCloudGUI()
     app.mainloop()
 
 

@@ -8,7 +8,30 @@ from typing import Optional
 from xml.etree import ElementTree
 
 from .device import get_device_connection
-import config
+
+# Interactive element classes (common Android UI elements)
+INTERACTIVE_CLASSES = [
+    "android.widget.Button",
+    "android.widget.ImageButton",
+    "android.widget.EditText",
+    "android.widget.CheckBox",
+    "android.widget.RadioButton",
+    "android.widget.Switch",
+    "android.widget.ToggleButton",
+    "android.widget.Spinner",
+    "android.widget.SeekBar",
+    "android.widget.RatingBar",
+    "android.widget.TabHost",
+    "android.widget.NumberPicker",
+    "android.support.v7.widget.RecyclerView",
+    "androidx.recyclerview.widget.RecyclerView",
+    "android.widget.ListView",
+    "android.widget.GridView",
+    "android.widget.ScrollView",
+    "android.widget.HorizontalScrollView",
+    "androidx.viewpager.widget.ViewPager",
+    "androidx.viewpager2.widget.ViewPager2"
+]
 
 
 @dataclass
@@ -145,7 +168,7 @@ def is_interactive(node) -> bool:
     return (
         attribs.get('focusable') == "true" or
         attribs.get('clickable') == "true" or
-        attribs.get('class') in config.INTERACTIVE_CLASSES
+        attribs.get('class') in INTERACTIVE_CLASSES
     )
 
 

@@ -8,7 +8,10 @@ import time
 from datetime import datetime
 from typing import Optional
 
-import config
+# Videos directory
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VIDEOS_DIR = os.path.join(BASE_DIR, "videos")
+os.makedirs(VIDEOS_DIR, exist_ok=True)
 
 
 # Global tracking of active recordings
@@ -42,7 +45,7 @@ def record_video(
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"recording_{timestamp}.mp4"
         
-        filepath = os.path.join(config.VIDEOS_DIR, filename)
+        filepath = os.path.join(VIDEOS_DIR, filename)
         recording_key = device_id or "default"
         
         # Check if already recording

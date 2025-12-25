@@ -6,7 +6,6 @@ from typing import Optional, Union
 
 from core.device import get_device_connection, DeviceConnectionError
 from core.ui_elements import get_ui_elements
-import config
 
 
 def type_text(

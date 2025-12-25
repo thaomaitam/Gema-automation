@@ -4,13 +4,18 @@ Handles screenshot capture and UI element visualization
 """
 import subprocess
 import io
+import os
 import random
 from datetime import datetime
 from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 
 from .ui_elements import ElementNode, get_ui_elements
-import config
+
+# Screenshots directory
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCREENSHOTS_DIR = os.path.join(BASE_DIR, "ss")
+os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 
 
 def capture_screenshot(device_id: Optional[str] = None) -> Image.Image:
@@ -109,7 +114,7 @@ def save_screenshot(
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"screenshot_{timestamp}.png"
     
-    filepath = os.path.join(config.SCREENSHOTS_DIR, filename)
+    filepath = os.path.join(SCREENSHOTS_DIR, filename)
     image.save(filepath, 'PNG')
     return filepath
 

@@ -85,4 +85,29 @@ TOOL_REGISTRY = {
     "xpath_get_text": xpath_get_text,
 }
 
-__all__ = list(TOOL_REGISTRY.keys()) + ['TOOL_REGISTRY']
+# ========== Pydantic-validated tools ==========
+from .schemas import TOOL_SCHEMAS
+from agent.tool_struct import StructuredTool
+
+# Core tools with Pydantic validation
+CORE_TOOLS = [
+    "press", "swipe", "type_text", "press_back", "press_home",
+    "app_start", "take_screenshot", "list_emulators",
+    "click_element", "wait_element"
+]
+
+# Create StructuredTools for core functions
+STRUCTURED_TOOLS = {}
+for name in CORE_TOOLS:
+    if name in TOOL_REGISTRY and name in TOOL_SCHEMAS:
+        STRUCTURED_TOOLS[name] = StructuredTool(
+            name=name,
+            func=TOOL_REGISTRY[name],
+            args_schema=TOOL_SCHEMAS[name]
+        )
+
+# List for Gemini SDK (auto function calling)
+GEMINI_TOOLS = [TOOL_REGISTRY[name] for name in CORE_TOOLS if name in TOOL_REGISTRY]
+
+__all__ = list(TOOL_REGISTRY.keys()) + ['TOOL_REGISTRY', 'STRUCTURED_TOOLS', 'GEMINI_TOOLS']
+
